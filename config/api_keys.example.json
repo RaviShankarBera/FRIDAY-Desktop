@@ -1,0 +1,14 @@
+{
+  "gemini_api_key": "PASTE_YOUR_GEMINI_KEY_HERE",
+  "os_system": "windows",
+  "assistant_name": "FRIDAY",
+  "elevenlabs_api_key": "",
+  "elevenlabs_voice_id": "",
+  "nvidia_api_key": "",
+  "deepseek_api_key": "",
+  "openai_api_key": "",
+  "active_provider": "gemini",
+  "allow_paid": false,
+  "live_model": "",
+  "stt_model_path": ""
+}
