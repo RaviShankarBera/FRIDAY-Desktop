@@ -1,0 +1,70 @@
+# ── Core: UI, audio, Gemini Live ──────────────────────────────────────────────
+PyQt6
+sounddevice
+numpy
+google-genai>=2.8.0
+
+# ── Web search & browser control ──────────────────────────────────────────────
+requests
+beautifulsoup4
+duckduckgo-search
+playwright
+
+# ── Automation / input control ────────────────────────────────────────────────
+pyautogui
+pyperclip
+pygetwindow
+
+# ── Vision & media ────────────────────────────────────────────────────────────
+pillow
+opencv-python
+mss
+
+# ── System, files & documents ─────────────────────────────────────────────────
+psutil
+send2trash
+youtube-transcript-api
+python-pptx
+openpyxl
+
+# ── Remote dashboard (control from your phone) ────────────────────────────────
+fastapi
+uvicorn[standard]
+cryptography
+python-multipart
+qrcode[pil]
+
+# ── Plugin extras: Gmail / Google Calendar (OAuth) ────────────────────────────
+google-api-python-client
+google-auth-oauthlib
+
+# ── Plugin extras: Tuya / Smart Life smart light (home_assistant) ─────────────
+tinytuya
+
+# ── Windows-only (pip skips these automatically on macOS / Linux) ─────────────
+comtypes;   sys_platform == "win32"
+pycaw;      sys_platform == "win32"
+win10toast; sys_platform == "win32"
+pywinauto;  sys_platform == "win32"
+pywin32;    sys_platform == "win32"
+wmi;        sys_platform == "win32"
+
+# ── Wake word ──────────────────────────────────────────────────────────────────
+# (the "Friday" wake word uses vosk, installed below; its model downloads on first run)
+#
+# macOS / Linux OS actions (volume, brightness, reminders) shell out to native
+# tools (pactl / brightnessctl / osascript / systemd), so no extra Python
+# packages are needed there — nothing Windows-specific is ever pulled in.
+
+# ── Wake word ("Friday"), offline ─────────────────────────────────────────────
+vosk
+
+# ── Agent layer (free, local) ─────────────────────────────────────────────────
+langgraph
+langchain-core
+fastembed        # local embeddings for the knowledge base (falls back to a built-in embedder)
+pypdf            # PDF files for the knowledge base
+pytest           # tests: python -m pytest tests
+pyttsx3         # offline system voice (last-resort fallback)
+edge-tts         # free Edge voices (fallback voice / non-ElevenLabs)
+miniaudio        # decodes mp3 voice output
