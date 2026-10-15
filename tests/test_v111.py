@@ -95,3 +95,30 @@ def test_app_match_and_bargein():
     assert not d._heard("stop") and d._heard("friday")
     d.accept_stop = True
     assert d._heard("please stop")
+
+
+def test_flight_url_has_no_hardcoded_route():
+    from actions.flight_finder import _build_google_flights_url
+    u = _build_google_flights_url("Bengaluru", "Kolkata", "2026-11-02")
+    assert "tfs=" not in u and "LHR" not in u and "Kolkata" in u
+
+
+def test_flight_slots_carry_across_turns(monkeypatch):
+    from actions import flight_finder as ff
+    ff._SLOTS.update(t=0.0, v={})
+    r1 = ff.flight_finder({"origin": "Bengaluru", "destination": "Kolkata"})
+    assert r1.startswith("[NEED_INFO]")
+    r2 = ff.flight_finder({"date": "2099-01-05"})          # model forgets origin/destination
+    assert r2.startswith("[NEED_INFO]") and "where from" not in r2 and "date" not in r2
+    assert ff._SLOTS["v"]["destination"] == "Kolkata"
+    r3 = ff.flight_finder({"destination": "Mumbai"})       # a new statement overrides
+    assert ff._SLOTS["v"]["destination"] == "Mumbai" and ff._SLOTS["v"]["origin"] == "Bengaluru"
+
+
+def test_no_gendered_honorifics_and_send_needs_platform():
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bad = [str(p) for p in list((root / "actions").glob("*.py")) if re.search(r"\bsir\b", p.read_text(), re.I)]
+    assert not bad, bad
+    from actions.send_message import send_message
+    assert send_message({"receiver": "A", "message_text": "hi"}).startswith("[NEED_INFO]")

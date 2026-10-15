@@ -25,7 +25,7 @@ def test_brief_full():
            "mail": lambda: [{"from": "Acme", "subject": "Invoice"}],
            "news": lambda: ([{"title": "N1"}, {"title": "N2"}], [{"title": "W1"}])}
     t = brief.build_brief(src, NOW)
-    assert t.startswith("Good morning sir. It is Friday, 16 October.")
+    assert t.startswith("Good morning. It is Friday, 16 October.")
     assert "Standup at 10:30 AM" in t and "Acme, Invoice" in t and "1. N1. 2. N2." in t and "World. 1. W1." in t
     assert "could not reach" not in t
 

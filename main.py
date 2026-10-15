@@ -367,6 +367,8 @@ class JarvisLive:
         self._loop                     = None
         self._is_speaking         = False
         self._speaking_since      = 0.0
+        _cfg_v = __import__("core.providers", fromlist=["x"]).load_config()
+        self._prebuffer_ms        = int(_cfg_v.get("voice_prebuffer_ms", 300))   # 0 = off; raise if voice stutters
         self._barge_in            = bool(__import__("core.providers", fromlist=["x"]).load_config().get("barge_in", True))   # say "Friday"/"stop" to cut her off
         self._speaking_lock       = threading.Lock()
         self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
@@ -903,12 +905,12 @@ class JarvisLive:
         # Identity injection — overrides any hardcoded name in prompt.txt
         _addr = (f"ADDRESS: Always call the user '{_user_name}'."
                  if _user_name
-                 else "ADDRESS: Address the user with the ordinary respectful form "
-                      "for a superior in the language you are currently speaking — "
-                      "\"sir\" in English, its everyday equivalent in any other "
-                      "language. Never an archaic or aristocratic form, and never "
-                      "the form from a different language than the one you are "
-                      "speaking in this sentence.")
+                 else "ADDRESS: Never assume anyone's gender. Do NOT use sir, ma'am, madam, mister, "
+                      "miss or any gendered honorific or title for the user or for anyone else "
+                      "(callers, people mentioned) unless that person told you how to be addressed. "
+                      "Use their first name if you know it, otherwise just speak naturally with no "
+                      "title. If a form of address matters, ask once and remember the answer. "
+                      "Use gender-neutral words about people you do not know.")
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
@@ -1369,6 +1371,7 @@ class JarvisLive:
                 dtype="int16",
                 blocksize=CHUNK_SIZE,
                 device=dev,
+                latency="high",     # bigger driver buffer: network jitter no longer breaks the voice up
             )
             st.start()
             return st
@@ -1402,6 +1405,18 @@ class JarvisLive:
                         self._turn_done_event.clear()
                     continue
 
+                if not self._is_speaking and self._prebuffer_ms > 0:
+                    # Start of a spoken reply: let ~300 ms build up first. Starting on the very first
+                    # network chunk made playback outrun the stream and stutter ("voice breaking").
+                    _want = int(RECEIVE_SAMPLE_RATE * 2 * self._prebuffer_ms / 1000)
+                    _t0 = time.monotonic()
+                    chunk = bytes(chunk)
+                    while (len(chunk) < _want and time.monotonic() - _t0 < 0.6
+                           and not (self._turn_done_event and self._turn_done_event.is_set())):
+                        try:
+                            chunk += await asyncio.wait_for(self.audio_in_queue.get(), timeout=0.1)
+                        except asyncio.TimeoutError:
+                            pass
                 self.set_speaking(True)
 
                 # Batch all immediately-available chunks into one write to reduce
@@ -1795,7 +1810,7 @@ class JarvisLive:
                 if not self.session or not _brief.should_auto_brief(cfg, now):
                     continue
                 text = await loop.run_in_executor(
-                    None, lambda: _brief.build_brief(_brief.default_sources(cfg), name=cfg.get("user_title") or "sir"))
+                    None, lambda: _brief.build_brief(_brief.default_sources(cfg), name=cfg.get("user_title") or ""))
                 _brief.mark_briefed(now)
                 self.ui.write_log("SYS: Morning brief.")
                 self.speak("Read this morning briefing aloud to the user exactly as written, "

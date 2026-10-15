@@ -132,11 +132,11 @@ def _hm(iso: str) -> str:
         return "all day"
 
 
-def build_brief(sources: dict[str, Callable], now: dt.datetime | None = None, name: str = "sir") -> str:
+def build_brief(sources: dict[str, Callable], now: dt.datetime | None = None, name: str = "") -> str:
     """sources: calendar/mail/weather/news callables. Returns the spoken text. Plain template, no LLM,
     so it is accurate by construction (numbers and headlines are copied, not paraphrased)."""
     now = now or dt.datetime.now()
-    parts = [f"Good morning {name}. It is {now.strftime('%A, %d %B')}."]
+    parts = [f"Good morning{(' ' + name) if name else ''}. It is {now.strftime('%A, %d %B')}."]
     missing = []
 
     def run(key):

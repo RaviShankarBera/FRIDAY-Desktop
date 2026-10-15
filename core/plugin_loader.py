@@ -68,7 +68,7 @@ class PluginRegistry:
         except Exception as e:
             self._logger(f"Plugin '{name}' crashed during run(): {e}")
             traceback.print_exc()
-            return f"Sir, the '{name}' plugin failed: {e}"
+            return f"The '{name}' plugin failed: {e}"
 
     # -- called by ui.py's settings tab to render per-plugin config forms --
     def settings_schemas(self) -> list[dict]:

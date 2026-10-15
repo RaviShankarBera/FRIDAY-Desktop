@@ -239,12 +239,15 @@ def send_message(
     params       = parameters or {}
     receiver     = params.get("receiver", "").strip()
     message_text = params.get("message_text", "").strip()
-    platform     = params.get("platform", "whatsapp").strip()
+    platform     = (params.get("platform") or "").strip()
 
     if not receiver:
         return "Please specify a recipient."
     if not message_text:
         return "Please specify the message content."
+    if not platform:
+        return ("[NEED_INFO] I have NOT sent anything. Ask the user which app to use "
+                "(WhatsApp, Telegram, Instagram...) before sending.")
     if not _PYAUTOGUI:
         return "PyAutoGUI is not installed — cannot control the desktop."
 

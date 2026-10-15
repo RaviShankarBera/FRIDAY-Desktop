@@ -1454,7 +1454,7 @@ class CustomizeOverlay(QWidget):
         lay.addWidget(self._name_input)
 
         lay.addSpacing(4)
-        lay.addWidget(_lbl("YOUR NAME  (leave blank for default sir / efendim)", 8,
+        lay.addWidget(_lbl("YOUR NAME  (leave blank: no title is used)", 8,
                             color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         self._user_input = QLineEdit(user_name)
         self._user_input.setPlaceholderText("e.g.  Tony   (leave blank for auto)")

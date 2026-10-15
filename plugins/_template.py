@@ -36,7 +36,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     try:
         result_text = f"Did the thing with {example_arg}."
     except Exception as e:
-        return f"Sir, my_plugin failed: {e}"
+        return f"my_plugin failed: {e}"
     if player:
         try:
             player.write_log(f"FRIDAY: {result_text}")

@@ -116,8 +116,7 @@ def _build_google_flights_url(
     return (
         f"{base}"
         f"?q={trip}"
-        f"&tfs=CBwQAhoeEgoyMDI1LTAzLTE1agcIARIDSVNUcgcIARIDTEhS"   
-        f"&curr=USD"
+        f"&curr=INR"
         f"&cabin={cabin_code}"
         f"&adults={passengers}"
     )
@@ -193,10 +192,10 @@ def _format_spoken(
     if not flights:
         return (
             f"I couldn't find any flights from {origin} to {destination} "
-            f"on {date}, sir. The page may not have loaded correctly."
+            f"on {date}. The page may not have loaded correctly."
         )
 
-    lines = [f"Here are the top flights from {origin} to {destination} on {date}, sir."]
+    lines = [f"Here are the top flights from {origin} to {destination} on {date}."]
 
     for i, f in enumerate(flights[:5], 1):
         airline   = f.get("airline",   "Unknown airline")
@@ -296,8 +295,30 @@ def _save_to_desktop(content: str, origin: str, destination: str) -> str:
     return str(filepath)
 
 
+_SLOT_KEYS = ("origin", "destination", "date", "return_date", "trip_type", "passengers", "cabin")
+_SLOTS: dict = {"t": 0.0, "v": {}}
+
+
+def _merge_slots(params: dict, now: float | None = None, ttl: float = 600.0) -> dict:
+    """Carry answers across turns. After NEED_INFO the model sometimes calls again with only the new
+    answer (e.g. just the date). Fill the gaps from the last call (within `ttl` seconds); anything the
+    new call states wins. Cleared once a search actually runs."""
+    import time as _t
+    now = _t.monotonic() if now is None else now
+    old = _SLOTS["v"] if now - _SLOTS["t"] < ttl else {}
+    merged = dict(old)
+    for k in _SLOT_KEYS:
+        v = params.get(k)
+        if v not in (None, "", 0):
+            merged[k] = v
+    out = dict(params)
+    out.update(merged)
+    _SLOTS["v"], _SLOTS["t"] = {k: merged[k] for k in _SLOT_KEYS if k in merged}, now
+    return out
+
+
 def flight_finder(parameters: dict, player=None, speak=None) -> str:
-    params = parameters or {}
+    params = _merge_slots(parameters or {})
 
     origin      = params.get("origin",      "").strip()
     destination = params.get("destination", "").strip()
@@ -343,11 +364,13 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     if return_date and return_date < date:
         return "[NEED_INFO] I have NOT searched. The return date is before the departure date. Ask the user to confirm the dates."
 
+    _SLOTS["v"] = {}      # search is going ahead: forget the slots
+
     if player:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak(f"Searching {'round trip' if return_date else 'one-way'} flights from {origin} to {destination} on {date} for {passengers}.")
 
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
@@ -361,10 +384,10 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         )
 
         if not raw_text:
-            return "Could not retrieve flight data, sir. The page may not have loaded."
+            return "Could not retrieve flight data. The page may not have loaded."
 
         if speak:
-            speak("Analysing the results now, sir.")
+            speak("Analysing the results now.")
 
         flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
         spoken  = _format_spoken(flights, origin, destination, date)
@@ -383,7 +406,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 
     except Exception as e:
         print(f"[FlightFinder] ❌ {e}")
-        return f"Flight search failed, sir: {e}"
+        return f"Flight search failed: {e}"
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────

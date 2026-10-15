@@ -13,7 +13,7 @@
   "stt_model_path": "",
   "telegram_bot_token": "",
   "home_city": "",
-  "user_title": "sir",
+  "user_title": "",
   "morning_brief_auto": false,
   "brief_hour": 6,
   "ollama_model": "llama3.2:3b",

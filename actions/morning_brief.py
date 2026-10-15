@@ -11,7 +11,7 @@ def morning_brief(parameters: dict, player=None) -> str:
             return brief.connect_google()
         except Exception as e:                       # noqa: BLE001
             return f"Sorry, Google connect failed: {e}"
-    text = brief.build_brief(brief.default_sources(cfg), name=cfg.get("user_title") or "sir")
+    text = brief.build_brief(brief.default_sources(cfg), name=cfg.get("user_title") or "")
     brief.mark_briefed(__import__("datetime").datetime.now())
     return text
 
