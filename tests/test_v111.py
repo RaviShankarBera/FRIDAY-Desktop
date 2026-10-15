@@ -122,3 +122,44 @@ def test_no_gendered_honorifics_and_send_needs_platform():
     assert not bad, bad
     from actions.send_message import send_message
     assert send_message({"receiver": "A", "message_text": "hi"}).startswith("[NEED_INFO]")
+
+
+def test_download_file(tmp_path, monkeypatch):
+    from actions import download_file as d
+    assert d.download_file({}).startswith("[NEED_INFO]")
+    assert "private" in d.download_file({"url": "http://127.0.0.1/x.zip"})
+    assert "http" in d.download_file({"url": "ftp://x/y"})
+    assert d._filename("http://a/b/report.pdf?x=1", {}) == "report.pdf"
+    assert d._filename("http://a/dl", {"content-disposition": 'attachment; filename="a b.zip"'}) == "a b.zip"
+    (tmp_path / "f.txt").write_text("x")
+    assert d._unique(tmp_path / "f.txt").name == "f (1).txt"
+    import http.server, threading, functools
+    (tmp_path / "srv").mkdir(); (tmp_path / "srv" / "hello.txt").write_text("hi there")
+    monkeypatch.setattr(d, "_safe_host", lambda u: (True, ""))
+    h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path / "srv"))
+    srv = http.server.HTTPServer(("127.0.0.1", 0), h); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        r = d.download_file({"url": f"http://127.0.0.1:{srv.server_port}/hello.txt", "folder": str(tmp_path / "out")})
+    finally:
+        srv.shutdown()
+    assert r.startswith("Downloaded hello.txt") and (tmp_path / "out" / "hello.txt").read_text() == "hi there"
+
+
+def test_official_installer_pick():
+    from actions.download_file import pick_installer, resolve_official, download_file
+    html = ('<a href="https://evil-downloads.com/claude.exe">x</a>'
+            '<a href="https://downloads.claude.ai/releases/Claude-arm64.exe">arm</a>'
+            '<a href="https://downloads.claude.ai/releases/Claude-x64.exe">x64</a>'
+            '<a href="/mac/Claude.dmg">m</a>')
+    doms = ("claude.ai", "claude.com")
+    assert pick_installer(html, "https://claude.com/download", doms, "AMD64").endswith("Claude-x64.exe")
+    assert pick_installer(html, "https://claude.com/download", doms, "ARM64").endswith("Claude-arm64.exe")
+    assert pick_installer('<a href="https://evil.com/a.exe">', "https://claude.com/download", doms) is None
+    assert resolve_official("Totally Unknown App") == (None, None, ())
+    assert "official" in download_file({"app": "Totally Unknown App"})
+
+
+def test_installer_pick_skips_other_products():
+    from actions.download_file import pick_installer
+    h = '<a href="https://downloads.claude.ai/claude-science/latest/windows-x64.exe">s</a>'
+    assert pick_installer(h, "https://claude.com/download", ("claude.ai",)) is None
