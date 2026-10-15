@@ -366,6 +366,8 @@ class JarvisLive:
         self.out_queue            = None
         self._loop                     = None
         self._is_speaking         = False
+        self._speaking_since      = 0.0
+        self._barge_in            = bool(__import__("core.providers", fromlist=["x"]).load_config().get("barge_in", True))   # say "Friday"/"stop" to cut her off
         self._speaking_lock       = threading.Lock()
         self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
@@ -469,7 +471,16 @@ class JarvisLive:
         return True
 
     def _on_wake_detected(self) -> None:
-        """Called from the detector thread when 'Friday' is heard."""
+        """Called from the detector thread when 'Friday' (or 'stop' while speaking) is heard."""
+        with self._speaking_lock:
+            speaking = self._is_speaking
+        if speaking and self._awake:
+            # Barge-in: the user spoke over FRIDAY. Cut the voice at once and listen.
+            if time.monotonic() - self._speaking_since < 1.2:
+                return          # ignore the first moment: FRIDAY's own voice can contain the word
+            self.interrupt()
+            self._last_user_speech = time.monotonic()
+            return
         self.wake(reason="wake word")
 
     def wake(self, reason: str = "wake word") -> None:
@@ -675,6 +686,8 @@ class JarvisLive:
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
+            if value and not self._is_speaking:
+                self._speaking_since = time.monotonic()
             self._is_speaking = value
         if not value:
             # FRIDAY just finished talking: the 10-15 s listening window starts now.
@@ -1140,10 +1153,18 @@ class JarvisLive:
             if self._wake_enabled and not self._awake:
                 det = self._wake_detector
                 if det is not None:
+                    det.accept_stop = False
                     det.feed(indata)
                 return
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
+            if jarvis_speaking and self._barge_in:
+                # The mic is not streamed to Gemini while FRIDAY talks (no echo cancellation), so
+                # listen locally for "Friday" / "stop" and cut her off. Offline, nothing leaves the PC.
+                det = self._wake_detector
+                if det is not None and det.ready:
+                    det.accept_stop = True
+                    det.feed(indata)
             if not jarvis_speaking and not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
@@ -1840,6 +1861,8 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        if self._barge_in and not self._wake_enabled and wake_is_ready():
+            await asyncio.get_event_loop().run_in_executor(None, self._ensure_wake_detector)   # barge-in listener
         self._start_phone_bridge()
         asyncio.create_task(self._auto_brief_loop())
 

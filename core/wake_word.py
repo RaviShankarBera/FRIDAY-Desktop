@@ -110,6 +110,7 @@ class WakeWordDetector:
         self._rec = None
         self._ready = False
         self._last_fire = 0.0
+        self.accept_stop = False     # True only while FRIDAY is speaking: "stop" then counts as a barge-in
 
     def start(self) -> bool:
         if self._running:
@@ -118,7 +119,7 @@ class WakeWordDetector:
             from vosk import Model, KaldiRecognizer, SetLogLevel
             SetLogLevel(-1)
             model = Model(str(MODEL_DIR))
-            self._rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps([WAKE_PHRASE, "[unk]"]))
+            self._rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps([WAKE_PHRASE, "stop", "[unk]"]))
         except Exception as e:
             self._logger(f"Wake word: could not load model — {e}")
             self._rec = None
@@ -154,7 +155,9 @@ class WakeWordDetector:
             pass
 
     def _heard(self, text: str) -> bool:
-        return contains_wake_word(text)
+        if contains_wake_word(text):
+            return True
+        return self.accept_stop and "stop" in (text or "").lower().split()
 
     def _fire(self) -> None:
         now = time.monotonic()

@@ -303,14 +303,32 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     destination = params.get("destination", "").strip()
     date_raw    = params.get("date",        "").strip()
     return_raw  = (params.get("return_date") or "").strip()
-    passengers  = max(1, int(params.get("passengers", 1)))
+    passengers  = max(1, int(params.get("passengers") or 1))
     cabin       = params.get("cabin", "economy").strip().lower()
     save        = bool(params.get("save", False))
 
+    trip_type = str(params.get("trip_type") or "").strip().lower().replace("-", "").replace(" ", "")
+    pax_given = params.get("passengers") not in (None, "", 0)
+
+    # Ask first, search second. Voice requests like "find a flight Bengaluru to Kolkata" are missing
+    # the date, trip type and travelers; searching on guesses wastes the user's time and gives wrong results.
+    missing = []
     if not origin or not destination:
-        return "Please provide both origin and destination, sir."
+        missing.append("where from and where to")
     if not date_raw:
-        return "Please provide a departure date, sir."
+        missing.append("the departure date")
+    if trip_type not in ("oneway", "roundtrip", "return"):
+        missing.append("one-way or round trip")
+    elif trip_type in ("roundtrip", "return") and not return_raw:
+        missing.append("the return date")
+    if not pax_given:
+        missing.append("how many travelers")
+    if missing:
+        return ("[NEED_INFO] I have NOT searched yet. Ask the user, in their own language and in ONE short "
+                "question, for: " + ", ".join(missing) + ". Do not guess or assume any of these. "
+                "Call flight_finder again only after the user has answered.")
+    if trip_type == "oneway":
+        return_raw = ""
 
     # Normalise cabin value
     if cabin not in _CABIN_CODE:
@@ -318,6 +336,12 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 
     date        = _parse_date(date_raw)
     return_date = _parse_date(return_raw) if return_raw else None
+    today_s = datetime.now().strftime("%Y-%m-%d")
+    if not re.match(r"\d{4}-\d{2}-\d{2}$", date or "") or date < today_s:
+        return ("[NEED_INFO] I have NOT searched. That departure date is unclear or in the past. "
+                "Ask the user for the exact travel date.")
+    if return_date and return_date < date:
+        return "[NEED_INFO] I have NOT searched. The return date is before the departure date. Ask the user to confirm the dates."
 
     if player:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
@@ -365,7 +389,11 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "flight_finder",
-    "description": "Searches Google Flights and speaks the best options.",
+    "description": ("Searches Google Flights and speaks the best options. NEVER call this until the user has "
+                    "told you ALL of: origin, destination, departure date, one-way or round trip (plus return "
+                    "date if round trip) and number of travelers. If any is missing, ask for it first in one "
+                    "short question; do not assume dates, trip type or traveler count. If the tool answers "
+                    "[NEED_INFO], ask the user that question."),
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -385,9 +413,13 @@ TOOL = {
                 "type": "STRING",
                 "description": "Return date for round trips"
             },
+            "trip_type": {
+                "type": "STRING",
+                "description": "oneway or roundtrip, exactly as the user said. Never assume."
+            },
             "passengers": {
                 "type": "INTEGER",
-                "description": "Number of passengers (default: 1)"
+                "description": "Number of travelers the user stated. Never assume."
             },
             "cabin": {
                 "type": "STRING",
@@ -401,7 +433,9 @@ TOOL = {
         "required": [
             "origin",
             "destination",
-            "date"
+            "date",
+            "trip_type",
+            "passengers"
         ]
     },
     "handler": flight_finder,

@@ -79,6 +79,19 @@ def _ddg_news(query: str, max_results: int = 8) -> list[dict]:
     return results
 
 
+def _rss_news(query: str, max_results: int = 8) -> list[dict]:
+    """Google News RSS: free, no key, no extra package. Last-resort backend that almost always works."""
+    import requests
+    from urllib.parse import quote_plus
+    from core.brief import parse_rss
+    q = query.strip() or "top news"
+    url = f"https://news.google.com/rss/search?q={quote_plus(q)}&hl=en-IN&gl=IN&ceid=IN:en"
+    r = requests.get(url, timeout=12, headers={"User-Agent": "FRIDAY/1.0"})
+    r.raise_for_status()
+    return [{"title": i["title"], "snippet": "", "url": i["link"], "source": i["source"]}
+            for i in parse_rss(r.text, max_results)]
+
+
 def _format_ddg(query: str, results: list[dict]) -> str:
     if not results:
         return f"No results found for: {query}"
@@ -158,57 +171,86 @@ def _search(query: str) -> str:
         return _gemini_search(query)
     except Exception as e:
         print(f"[WebSearch] ⚠️ Gemini failed ({e}) — trying DDG...")
-        results = _ddg_search(query)
-        return _format_ddg(query, results)
+        try:
+            results = _ddg_search(query)
+            if results:
+                return _format_ddg(query, results)
+        except Exception as e2:
+            print(f"[WebSearch] ⚠️ DDG failed ({e2}) — trying Google News RSS...")
+        results = _rss_news(query)
+        if results:
+            return _format_news(query, results)
+        return f"No results found for: {query}"
 
 
 def _news(query: str) -> str:
     """
-    Runs Gemini grounded search AND DDG news in parallel.
-    Returns whichever delivers a valid result first; cancels the other.
+    Runs Gemini grounded search, DDG news and Google News RSS in parallel.
+    Returns the best valid result (Gemini/DDG get a short head start over RSS).
+    Waits up to 30 s: grounded Gemini search often needs 10-20 s on a free key.
     """
     import threading
+    import time
 
     gemini_query = f"latest news today: {query}" if query else "top world news today"
     ddg_query    = query if query else "world news today"
 
-    result_box  = [None]   # first valid result lands here
-    lock        = threading.Lock()
-    done_evt    = threading.Event()
-    failures    = [0]
+    results = {}
+    lock = threading.Lock()
+    done_evt = threading.Event()
+    finished = [0]
+    TOTAL = 3
 
-    def _store(r: str) -> None:
-        if r and len(r) > 60:
-            with lock:
-                if result_box[0] is None:
-                    result_box[0] = r
-            done_evt.set()
-        else:
-            with lock:
-                failures[0] += 1
-                if failures[0] >= 2:   # both failed — unblock caller
-                    done_evt.set()
+    def _store(name: str, r: str) -> None:
+        with lock:
+            finished[0] += 1
+            if r and len(r) > 60 and not r.startswith("No "):
+                results.setdefault(name, r)
+                done_evt.set()
+            elif finished[0] >= TOTAL:
+                done_evt.set()
 
     def _try_gemini():
         try:
-            _store(_gemini_search(gemini_query))
+            _store("gemini", _gemini_search(gemini_query))
         except Exception as e:
             print(f"[WebSearch] ⚠️ Gemini news failed ({e})")
-            _store("")
+            _store("gemini", "")
 
     def _try_ddg():
         try:
-            results = _ddg_news(ddg_query, max_results=8)
-            _store(_format_news(ddg_query, results))
+            _store("ddg", _format_news(ddg_query, _ddg_news(ddg_query, max_results=8)))
         except Exception as e:
             print(f"[WebSearch] ⚠️ DDG news failed ({e})")
-            _store("")
+            _store("ddg", "")
 
-    threading.Thread(target=_try_gemini, daemon=True).start()
-    threading.Thread(target=_try_ddg,    daemon=True).start()
+    def _try_rss():
+        try:
+            _store("rss", _format_news(ddg_query, _rss_news(ddg_query, max_results=8)))
+        except Exception as e:
+            print(f"[WebSearch] ⚠️ RSS news failed ({e})")
+            _store("rss", "")
 
-    done_evt.wait(timeout=10.0)
-    return result_box[0] or f"No news found for: {query}"
+    for fn in (_try_gemini, _try_ddg, _try_rss):
+        threading.Thread(target=fn, daemon=True).start()
+
+    done_evt.wait(timeout=30.0)
+    if results and "gemini" not in results and "ddg" not in results:
+        time.sleep(3.0)                      # RSS landed first: give the richer sources a moment
+    with lock:
+        for k in ("gemini", "ddg", "rss"):
+            if k in results:
+                return results[k]
+    return f"Sorry, I could not fetch news for: {query or 'today'}. Gemini, DuckDuckGo and Google News all failed or timed out; check the internet and the FRIDAY log."
+
+
+def _trim_news(text: str, n: int) -> str:
+    """Keep the first n numbered items of a news list (header and format preserved)."""
+    import re
+    parts = re.split(r"\n(?=\d+\. )", text)
+    if len(parts) <= 1:
+        return text
+    return "\n".join(parts[: n + 1]) if not re.match(r"\d+\. ", parts[0]) else "\n".join(parts[:n])
 
 
 def _research(query: str) -> str:
@@ -224,8 +266,13 @@ def _research(query: str) -> str:
         return _gemini_search(research_query)
     except Exception as e:
         print(f"[WebSearch] ⚠️ Research Gemini failed ({e}) — DDG fallback...")
-        results = _ddg_search(query, max_results=10)
-        return _format_ddg(query, results)
+        try:
+            results = _ddg_search(query, max_results=10)
+            if results:
+                return _format_ddg(query, results)
+        except Exception as e2:
+            print(f"[WebSearch] ⚠️ Research DDG failed ({e2}) — Google News RSS fallback...")
+        return _news(query)
 
 
 def _price(query: str) -> str:
@@ -303,6 +350,9 @@ def web_search(
 
     if items and mode not in ("compare",):
         mode = "compare"
+    import re as _re
+    if mode in ("search", "research") and _re.search(r"\b(news|headlines?|breaking)\b", query, _re.I):
+        mode = "news"                        # news questions need the news pipeline, not a bare Google open
 
     if player:
         player.write_log(f"[Search:{mode}] {query or ', '.join(items)}")
@@ -317,7 +367,9 @@ def web_search(
         if mode == "compare" and items:
             return _compare(items, aspect)
         if mode == "news":
-            return _news(query)
+            out = _news(query)
+            m = _re.search(r"\btop\s+(\d{1,2})\b", query, _re.I)
+            return _trim_news(out, int(m.group(1))) if m else out
         if mode == "research":
             return _research(query)
         if mode == "price":
@@ -332,7 +384,7 @@ def web_search(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "web_search",
-    "description": "Searches the web: opens Google with the query in the user's default browser (results are shown there) and returns a short summary to speak. Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
+    "description": "Searches the web: opens Google with the query in the user's default browser (results are shown there) and returns a short summary to speak. Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. For news or 'top N headlines' ALWAYS use mode 'news'. The returned text is real data: read it out as a numbered summary. If the result starts with 'Sorry', say which source failed; never say you cannot find news when the tool returned items. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
     "parameters": {
         "type": "OBJECT",
         "properties": {

@@ -61,6 +61,8 @@ _APP_ALIASES: dict[str, dict[str, str]] = {
     "capcut":             {"Windows": "CapCut",                  "Darwin": "CapCut",               "Linux": "capcut"},
     "steam":              {"Windows": "steam",                   "Darwin": "Steam",                "Linux": "steam"},
     "epic":               {"Windows": "EpicGamesLauncher",       "Darwin": "Epic Games Launcher",  "Linux": "legendary"},
+    "claude":             {"Windows": "Claude",                  "Darwin": "Claude",               "Linux": "claude"},
+    "chatgpt":            {"Windows": "ChatGPT",                 "Darwin": "ChatGPT",              "Linux": "chatgpt"},
     "epic games":         {"Windows": "EpicGamesLauncher",       "Darwin": "Epic Games Launcher",  "Linux": "legendary"},
 }
 
@@ -237,6 +239,43 @@ _OS_LAUNCHERS = {
     "Linux":   _launch_linux,
 }
 
+_APPS_CACHE: dict = {"t": 0.0, "apps": None}
+
+
+def installed_apps(max_age: float = 300.0) -> dict[str, str]:
+    """Windows: {display name: AppID} from Get-StartApps (classic and Store apps). {} elsewhere or on failure."""
+    import json as _json
+    if _SYSTEM != "Windows":
+        return {}
+    now = time.monotonic()
+    if _APPS_CACHE["apps"] is not None and now - _APPS_CACHE["t"] < max_age:
+        return _APPS_CACHE["apps"]
+    apps: dict[str, str] = {}
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress"],
+                           capture_output=True, text=True, timeout=25)
+        data = _json.loads(r.stdout or "[]")
+        if isinstance(data, dict):
+            data = [data]
+        apps = {d["Name"]: d["AppID"] for d in data if d.get("Name") and d.get("AppID")}
+    except Exception as e:
+        print(f"[open_app] installed-app scan failed: {e}")
+    _APPS_CACHE.update(t=now, apps=apps)
+    return apps
+
+
+def _launch_installed(app_id: str) -> bool:
+    try:
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app_id}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5)
+        return True
+    except Exception as e:
+        print(f"[open_app] AppsFolder launch failed: {e}")
+        return False
+
+
 def open_app(
     parameters=None,
     response=None,
@@ -251,6 +290,24 @@ def open_app(
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:
         return f"Unsupported operating system: {_SYSTEM}"
+
+    # Windows: match what was heard against what is really installed before launching anything.
+    # (Speech mishears names, e.g. "Claude" -> "Cloud"; the old code typed the wrong word into Start.)
+    confirmed = str((parameters or {}).get("confirmed", "")).lower() in ("true", "yes", "1")
+    apps = installed_apps() if (_SYSTEM == "Windows" and _normalize(app_name).lower() == app_name.lower()) else {}
+    if apps:
+        from core.app_match import resolve
+        status, name, score = resolve(app_name, list(apps))
+        if status == "launch" or (status == "confirm" and confirmed):
+            if _launch_installed(apps[name]):
+                return f"Opened {name}."
+        elif status == "confirm":
+            return (f"[CONFIRM_APP] I have NOT opened anything. I heard '{app_name}' but the closest installed app is "
+                    f"'{name}'. Ask the user in one short question: 'Do you mean {name}?' If they say yes, call open_app "
+                    f"again with app_name='{name}' and confirmed=true.")
+        else:
+            return (f"Sorry, I could not find an installed app called '{app_name}'. I did not open anything. "
+                    f"Ask the user to repeat the app name or spell it.")
 
     normalized = _normalize(app_name)
     print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})")
@@ -276,13 +333,17 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
+    "description": "Opens any application on the computer. If the tool answers [CONFIRM_APP], ask the user that question and do not open anything else. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify', 'Claude'). Use the real product name, not a sound-alike."
+            },
+            "confirmed": {
+                "type": "STRING",
+                "description": "'true' only after the user confirmed the app name when asked 'Do you mean X?'."
             }
         },
         "required": [

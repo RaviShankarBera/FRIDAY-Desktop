@@ -8,6 +8,7 @@ google-genai>=2.8.0
 requests
 beautifulsoup4
 duckduckgo-search
+ddgs
 playwright
 
 # ── Automation / input control ────────────────────────────────────────────────
