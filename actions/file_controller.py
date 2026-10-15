@@ -637,6 +637,8 @@ def file_controller(
     response=None,
     player=None,
     session_memory=None,
+    speak=None,
+    _approved: bool = False,
 ) -> str:
     params = parameters or {}
     action = params.get("action", "").lower().strip()
@@ -648,13 +650,13 @@ def file_controller(
 
     _risky = {"delete": "Moving {t} to the trash", "move": "Moving {t} to {d}", "rename": "Renaming {t} to {n}",
               "organize_desktop": "Reorganising the files on your Desktop into folders"}
-    if action in _risky or (action == "write" and not params.get("append")):
+    if not _approved and (action in _risky or (action == "write" and not params.get("append"))):
         from core import interactive
         summary = _risky.get(action, "Overwriting {t}").format(
             t=name or path, d=params.get("destination", "") or "the destination", n=params.get("new_name", ""))
-        hold = interactive.gate("file_controller", f"{summary} (action: {action})", params.get("confirmed"))
-        if hold:
-            return hold
+        frozen = {k: v for k, v in params.items() if k != "confirmed"}   # the exact parameters, captured now
+        return interactive.park("file_controller", f"{summary} (action: {action})",
+                                lambda: file_controller(frozen, response, player, session_memory, speak, _approved=True), speak)
 
     try:
         if action == "list":
@@ -736,10 +738,6 @@ TOOL = {
             "destination": {
                 "type": "STRING",
                 "description": "Destination path for move/copy"
-            },
-            "confirmed": {
-                "type": "STRING",
-                "description": "'true' only after the user said yes to the read-back of delete/move/rename/overwrite."
             },
             "new_name": {
                 "type": "STRING",

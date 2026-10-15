@@ -100,28 +100,16 @@ def test_suspicious_heuristics(tmp_path):
     assert "not antivirus" in dr.CAVEAT
 
 
-def test_actions_report_first_and_gate(tmp_path, monkeypatch):
+def test_actions_report_first(tmp_path, monkeypatch):
     from actions import system_doctor as sd
-    interactive.reset()
     monkeypatch.setattr(sd, "REPORT_DIR", tmp_path / "reports")
     data = os.urandom(3000)
     _mk(tmp_path / "x/a.bin", data, 4); _mk(tmp_path / "x/b.bin", data)
     r = sd.system_doctor({"action": "duplicates", "path": str(tmp_path / "x"), "min_mb": "0.001"})
     assert "Nothing was changed" in r and (tmp_path / "x/b.bin").exists() and list((tmp_path / "reports").glob("duplicates_*.txt"))
-    trashed = []
-    import send2trash
-    monkeypatch.setattr(send2trash, "send2trash", lambda p: (trashed.append(p), os.remove(p)))
-    g = sd.system_doctor({"action": "delete_duplicates", "path": str(tmp_path / "x"), "min_mb": "0.001"})
-    assert g.startswith("[CONFIRM]") and "1 duplicate files" in g and not trashed
-    sk = sd.system_doctor({"action": "delete_duplicates", "path": str(tmp_path / "x"), "min_mb": "0.001", "confirmed": "true"})
-    assert sk.startswith("Moved 1") and len(trashed) == 1
-    # temp cleanup is gated too
     root = tmp_path / "T"; _mk(root / "o.tmp", b"x" * 99, 9)
     monkeypatch.setattr(dr, "temp_roots", lambda: [root])
-    assert "Nothing was deleted" in sd.system_doctor({"action": "temp_report"})
-    assert sd.system_doctor({"action": "clean_temp"}).startswith("[CONFIRM]") and (root / "o.tmp").exists()
-    assert sd.system_doctor({"action": "clean_temp", "confirmed": "true"}).startswith("Deleted 1")
-    assert not (root / "o.tmp").exists()
+    assert "Nothing was deleted" in sd.system_doctor({"action": "temp_report"}) and (root / "o.tmp").exists()
     assert sd.system_doctor({"action": "bogus"}).startswith("[NEED_INFO]")
     assert "CPU" in sd.system_doctor({"action": "performance"})
     assert "Windows" in sd.system_doctor({"action": "defender_scan"})

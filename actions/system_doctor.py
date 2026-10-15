@@ -51,7 +51,7 @@ def _log(player, text: str) -> None:
 
 
 # ── actions ───────────────────────────────────────────────────────────────────
-def _duplicates(p, player, apply: bool) -> str:
+def _duplicates(p, player, apply: bool, speak=None) -> str:
     roots = _roots(p)
     if not roots:
         return "Sorry, I could not find that folder. Ask the user which folder to check."
@@ -77,15 +77,14 @@ def _duplicates(p, player, apply: bool) -> str:
     if trash is None:
         return "Sorry, I can't move files to the Recycle Bin because send2trash isn't installed, so I deleted nothing."
     dupes = [d for x in g for d in x["dupes"]]
-    hold = interactive.gate("system_doctor", f"Moving {len(dupes)} duplicate files ({dr.human(res['wasted'])}) to the Recycle Bin, "
-                            f"keeping the oldest copy of each. List {dr.digest(dupes)} is in {rep}", p.get("confirmed"))
-    if hold:
-        return hold
-    n, freed, errs = dr.apply_duplicates(g, trash)
-    return f"Moved {n} duplicate files ({dr.human(freed)}) to the Recycle Bin; they can be restored from there." + (f" Skipped {len(errs)}." if errs else "")
+    def _go() -> str:
+        n, freed, errs = dr.apply_duplicates(g, trash)
+        return f"Moved {n} duplicate files ({dr.human(freed)}) to the Recycle Bin; they can be restored from there." + (f" Skipped {len(errs)}." if errs else "")
+    return interactive.park("system_doctor", f"Move {len(dupes)} duplicate files ({dr.human(res['wasted'])}) to the Recycle Bin, "
+                            f"keeping the oldest copy of each. List {dr.digest(dupes)} is in {rep}", _go, speak)
 
 
-def _temp(p, player, apply: bool) -> str:
+def _temp(p, player, apply: bool, speak=None) -> str:
     roots = dr.temp_roots()
     res = dr.scan_temp(roots)
     lines = [f"Temp files older than 2 days: {len(res['files'])} files, {dr.human(res['total'])}", ""]
@@ -99,12 +98,11 @@ def _temp(p, player, apply: bool) -> str:
     if not apply:
         return (f"I can free {dr.human(res['total'])} from {len(res['files'])} old temp files: {where}. Full list saved to {rep}. "
                 f"Nothing was deleted. Offer to clean them.")
-    hold = interactive.gate("system_doctor", f"Permanently deleting {len(res['files'])} temp files older than 2 days ({dr.human(res['total'])}) "
-                            f"from {where}. List {dr.digest([f for f, _ in res['files']])} is in {rep}", p.get("confirmed"))
-    if hold:
-        return hold
-    n, freed, errs = dr.apply_temp(res["files"], roots)
-    return f"Deleted {n} temp files and freed {dr.human(freed)}. Files in use were left alone."
+    def _go() -> str:
+        n, freed, errs = dr.apply_temp(res["files"], roots)
+        return f"Deleted {n} temp files and freed {dr.human(freed)}. Files in use were left alone."
+    return interactive.park("system_doctor", f"Permanently delete {len(res['files'])} temp files older than 2 days ({dr.human(res['total'])}) "
+                            f"from {where}. List {dr.digest([f for f, _ in res['files']])} is in {rep}", _go, speak)
 
 
 def _disk(p, player) -> str:
@@ -133,7 +131,7 @@ def _startup(p, player) -> str:
             f"item to keep or needs your judgement. Full list: {rep}. Disabling is reversible. Nothing was changed.")
 
 
-def _set_startup(p, player, enable: bool) -> str:
+def _set_startup(p, player, enable: bool, speak=None) -> str:
     name = (p.get("name") or "").strip()
     if not name:
         return "[NEED_INFO] Ask which startup app."
@@ -148,10 +146,9 @@ def _set_startup(p, player, enable: bool) -> str:
         pass  # still allowed, but the read-back warns
     verb = "Enabling" if enable else "Disabling"
     note = " It looks like a driver or security component, so this is not recommended." if it["verdict"] == "keep" and not enable else ""
-    hold = interactive.gate("system_doctor", f"{verb} the startup app {it['name']}. This is reversible.{note}", p.get("confirmed"))
-    if hold:
-        return hold
-    return f"{verb[:-3]}ed {it['name']} at startup. Takes effect next sign-in." if dr.set_startup_state(it, enable) else "Sorry, that did not work."
+    def _go() -> str:
+        return f"{verb[:-3]}ed {it['name']} at startup. Takes effect next sign-in." if dr.set_startup_state(it, enable) else "Sorry, that did not work."
+    return interactive.park("system_doctor", f"{verb} the startup app {it['name']}. This is reversible.{note}", _go, speak)
 
 
 def _perf(p, player) -> str:
@@ -180,7 +177,7 @@ def _ps(cmd: str, timeout: int = 20) -> subprocess.CompletedProcess:
     return subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=timeout)
 
 
-def _defender(p, player) -> str:
+def _defender(p, player, speak=None) -> str:
     if os.name != "nt":
         return "Windows Defender scans are only available on Windows."
     try:
@@ -190,14 +187,14 @@ def _defender(p, player) -> str:
         return "I could not reach Windows Defender. Open Windows Security to scan."
     path = (p.get("path") or "").strip()
     desc = f"a Windows Defender custom scan of {path}" if path else "a Windows Defender quick scan"
-    hold = interactive.gate("system_doctor", f"Starting {desc}. It runs in the background and may slow the PC for a few minutes", p.get("confirmed"))
-    if hold:
-        return hold
     cmd = f"Start-MpScan -ScanType CustomScan -ScanPath '{path}'" if path else "Start-MpScan -ScanType QuickScan"
     if path and ("'" in path or ";" in path or not Path(path).exists()):
         return "Sorry, that path isn't valid for a scan."
-    subprocess.Popen(["powershell", "-NoProfile", "-Command", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return f"Started {desc}. Ask me for the scan results in a few minutes, or open Windows Security."
+
+    def _go() -> str:
+        subprocess.Popen(["powershell", "-NoProfile", "-Command", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"Started {desc}. Ask me for the scan results in a few minutes, or open Windows Security."
+    return interactive.park("system_doctor", f"Start {desc}. It runs in the background and may slow the PC for a few minutes", _go, speak)
 
 
 def _defender_results(p, player) -> str:
@@ -213,17 +210,17 @@ def system_doctor(parameters=None, response=None, player=None, session_memory=No
     a = (p.get("action") or "").strip().lower()
     try:
         return {
-            "duplicates": lambda: _duplicates(p, player, False),
-            "delete_duplicates": lambda: _duplicates(p, player, True),
-            "temp_report": lambda: _temp(p, player, False),
-            "clean_temp": lambda: _temp(p, player, True),
+            "duplicates": lambda: _duplicates(p, player, False, speak),
+            "delete_duplicates": lambda: _duplicates(p, player, True, speak),
+            "temp_report": lambda: _temp(p, player, False, speak),
+            "clean_temp": lambda: _temp(p, player, True, speak),
             "disk_usage": lambda: _disk(p, player),
             "startup": lambda: _startup(p, player),
-            "disable_startup": lambda: _set_startup(p, player, False),
-            "enable_startup": lambda: _set_startup(p, player, True),
+            "disable_startup": lambda: _set_startup(p, player, False, speak),
+            "enable_startup": lambda: _set_startup(p, player, True, speak),
             "performance": lambda: _perf(p, player),
             "suspicious": lambda: _suspicious(p, player),
-            "defender_scan": lambda: _defender(p, player),
+            "defender_scan": lambda: _defender(p, player, speak),
             "defender_results": lambda: _defender_results(p, player),
         }[a]()
     except KeyError:
@@ -244,7 +241,6 @@ TOOL = {
         "path": {"type": "STRING", "description": "Optional folder. Default: Downloads, Documents, Desktop, Pictures (duplicates); the system drive (disk_usage)."},
         "name": {"type": "STRING", "description": "Startup app name for disable_startup/enable_startup"},
         "min_mb": {"type": "STRING", "description": "Minimum file size in MB for duplicates (default 1)"},
-        "confirmed": {"type": "STRING", "description": "'true' only after the user said yes to the read-back."},
     }, "required": ["action"]},
     "handler": system_doctor,
 }

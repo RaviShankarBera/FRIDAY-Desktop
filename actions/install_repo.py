@@ -120,54 +120,51 @@ def install_repo(parameters=None, response=None, player=None, session_memory=Non
     else:
         iso = ""
     summary = ri.plan_summary(owner, name, sha, target, plan, flags, iso)
-    hold = interactive.gate("install_repo", summary, p.get("confirmed"))
-    if hold:
-        if readme_part:
-            hold += " (The README's own install steps are NOT run; offer to read them out if asked.)"
-        return hold
+    def _go() -> str:
+        base.mkdir(parents=True, exist_ok=True)
+        ok, err, sha2 = _clone(owner, name, target)
+        if not ok:
+            return f"Sorry, the download failed: {err}. Nothing was installed."
+        if sha2 != sha:
+            shutil.rmtree(target, ignore_errors=True)
+            return "The project changed while I was preparing, so I stopped and deleted it. Ask again to get a fresh read-back."
+        _write_marker(base, name, {"tier": tier, "sandboxed": use_sbx, "repo": f"{owner}/{name}", "target": str(target)})
+        if use_sbx:
+            files2 = _read_files(target)
+            out = base / ".friday_sandbox" / name
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "run.ps1").write_text(sbx.render_ps1(plan["kinds"], "requirements.txt" in files2,
+                                                        bool({"pyproject.toml", "setup.py"} & set(files2))), encoding="utf-8")
+            (out / "friday.wsb").write_text(sbx.render_wsb(str(target), str(out)), encoding="utf-8")
+            ok2, why2 = sbx.launch(out / "friday.wsb")
+            if not ok2:
+                return f"Downloaded {owner}/{name} to {target} but could not start Windows Sandbox: {why2}"
+            return (f"Downloaded {owner}/{name} to {target} (read-only copy; nothing from it ran on this PC). A Windows Sandbox window "
+                    f"opened and is installing it in isolation, which takes a few minutes. Its log appears at {out / 'log.txt'}. "
+                    f"The sandbox and everything in it vanish when closed. Tell the user to watch that window.")
+        done, failed = [], None
+        for c in plan["commands"]:
+            if speak:
+                speak(f"Now: {c['why']}.")
+            try:
+                r = subprocess.run(c["argv"], cwd=c["cwd"], capture_output=True, text=True, timeout=1200, env=ri.clean_env())
+            except Exception as e:
+                failed = (c, str(e)[:200]); break
+            if r.returncode != 0:
+                failed = (c, (r.stderr or r.stdout)[-300:]); break
+            done.append(c["why"])
+        lines = [f"Downloaded {owner}/{name} to {target}."]
+        if done:
+            lines.append("Done: " + "; ".join(done) + ".")
+        if failed:
+            lines.append(f"Stopped at: {failed[0]['why']}. Error: {failed[1].strip()[-200:]}")
+        if plan["manual"]:
+            lines.append("Needs you: " + " ".join(plan["manual"]))
+        lines.append("I did not run the project. If the user wants it started, call run_project with folder=" + str(target) + ".")
+        return " ".join(lines)
 
-    base.mkdir(parents=True, exist_ok=True)
-    ok, err, sha2 = _clone(owner, name, target)
-    if not ok:
-        return f"Sorry, the download failed: {err}. Nothing was installed."
-    if sha2 != sha:
-        shutil.rmtree(target, ignore_errors=True)
-        return "The project changed while I was preparing, so I stopped and deleted it. Ask again to get a fresh read-back."
-    _write_marker(base, name, {"tier": tier, "sandboxed": use_sbx, "repo": f"{owner}/{name}", "target": str(target)})
-    if use_sbx:
-        files2 = _read_files(target)
-        out = base / ".friday_sandbox" / name
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "run.ps1").write_text(sbx.render_ps1(plan["kinds"], "requirements.txt" in files2,
-                                                    bool({"pyproject.toml", "setup.py"} & set(files2))), encoding="utf-8")
-        (out / "friday.wsb").write_text(sbx.render_wsb(str(target), str(out)), encoding="utf-8")
-        ok2, why2 = sbx.launch(out / "friday.wsb")
-        if not ok2:
-            return f"Downloaded {owner}/{name} to {target} but could not start Windows Sandbox: {why2}"
-        return (f"Downloaded {owner}/{name} to {target} (read-only copy; nothing from it ran on this PC). A Windows Sandbox window "
-                f"opened and is installing it in isolation, which takes a few minutes. Its log appears at {out / 'log.txt'}. "
-                f"The sandbox and everything in it vanish when closed. Tell the user to watch that window.")
-    done, failed = [], None
-    for c in plan["commands"]:
-        if speak:
-            speak(f"Now: {c['why']}.")
-        try:
-            r = subprocess.run(c["argv"], cwd=c["cwd"], capture_output=True, text=True, timeout=1200, env=ri.clean_env())
-        except Exception as e:
-            failed = (c, str(e)[:200]); break
-        if r.returncode != 0:
-            failed = (c, (r.stderr or r.stdout)[-300:]); break
-        done.append(c["why"])
-    lines = [f"Downloaded {owner}/{name} to {target}."]
-    if done:
-        lines.append("Done: " + "; ".join(done) + ".")
-    if failed:
-        lines.append(f"Stopped at: {failed[0]['why']}. Error: {failed[1].strip()[-200:]}")
-    if plan["manual"]:
-        lines.append("Needs you: " + " ".join(plan["manual"]))
-    lines.append("I did not run the project. If the user wants it started, call run_project with folder=" + str(target) + ".")
-    return " ".join(lines)
-
+    note = " (The README's own install steps are NOT run.)" if readme_part else ""
+    return interactive.park("install_repo", summary + note, _go, speak)
 
 TOOL = {
     "name": "install_repo",
@@ -178,7 +175,6 @@ TOOL = {
         "repo": {"type": "STRING", "description": "'owner/name' or a github.com URL"},
         "location": {"type": "STRING", "description": "Full folder path to install into, e.g. D:\\Apps. Ask the user; never guess."},
         "sandbox": {"type": "STRING", "description": "Leave empty. 'no' only if the user explicitly refuses Windows Sandbox."},
-        "confirmed": {"type": "STRING", "description": "'true' only after the user said yes to the read-back."},
     }, "required": ["repo"]},
     "handler": install_repo,
 }

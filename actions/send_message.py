@@ -235,6 +235,7 @@ def send_message(
     response=None,
     player=None,
     session_memory=None,
+    speak=None,
 ) -> str:
     params       = parameters or {}
     receiver     = params.get("receiver", "").strip()
@@ -249,29 +250,24 @@ def send_message(
         return ("[NEED_INFO] I have NOT sent anything. Ask the user which app to use "
                 "(WhatsApp, Telegram, Instagram...) before sending.")
     from core import interactive
-    hold = interactive.gate("send_message", f"Sending {platform.title()} message to {receiver}: '{message_text}'",
-                            params.get("confirmed"))
-    if hold:
-        return hold
-    if not _PYAUTOGUI:
-        return "PyAutoGUI is not installed — cannot control the desktop."
 
-    preview = message_text[:50] + ("…" if len(message_text) > 50 else "")
-    print(f"[SendMessage] 📨 {platform} → {receiver}: {preview}")
-    if player:
-        player.write_log(f"[msg] {platform} → {receiver}")
+    def _send() -> str:
+        if not _PYAUTOGUI:
+            return "PyAutoGUI is not installed — cannot control the desktop."
+        preview = message_text[:50] + ("…" if len(message_text) > 50 else "")
+        print(f"[SendMessage] 📨 {platform} → {receiver}: {preview}")
+        if player:
+            player.write_log(f"[msg] {platform} → {receiver}")
+        try:
+            result = _resolve_platform(platform)(receiver, message_text)
+        except Exception as e:
+            result = f"Could not send message: {e}"
+        print(f"[SendMessage] {'✅' if 'sent' in result.lower() else '❌'} {result}")
+        if player:
+            player.write_log(f"[msg] {result}")
+        return result
 
-    try:
-        handler = _resolve_platform(platform)
-        result  = handler(receiver, message_text)
-    except Exception as e:
-        result = f"Could not send message: {e}"
-
-    print(f"[SendMessage] {'✅' if 'sent' in result.lower() else '❌'} {result}")
-    if player:
-        player.write_log(f"[msg] {result}")
-
-    return result
+    return interactive.park("send_message", f"Send {platform.title()} message to {receiver}: '{message_text}'", _send, speak)
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
@@ -292,10 +288,6 @@ TOOL = {
             "platform": {
                 "type": "STRING",
                 "description": "Platform: WhatsApp, Telegram, etc."
-            },
-            "confirmed": {
-                "type": "STRING",
-                "description": "'true' only after the user said yes to the read-back."
             }
         },
         "required": [

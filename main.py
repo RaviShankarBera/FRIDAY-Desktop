@@ -367,6 +367,7 @@ class JarvisLive:
         self._loop                     = None
         self._is_speaking         = False
         self._speaking_since      = 0.0
+        self._confirm_armed       = 0.0
         _cfg_v = __import__("core.providers", fromlist=["x"]).load_config()
         self._prebuffer_ms        = int(_cfg_v.get("voice_prebuffer_ms", 300))   # 0 = off; raise if voice stutters
         self._barge_in            = bool(__import__("core.providers", fromlist=["x"]).load_config().get("barge_in", True))   # say "Friday"/"stop" to cut her off
@@ -690,7 +691,23 @@ class JarvisLive:
         with self._speaking_lock:
             if value and not self._is_speaking:
                 self._speaking_since = time.monotonic()
+            if (not value and self._is_speaking and confirm_gate.pending_title()
+                    and self._speaking_since > confirm_gate.pending_since()):
+                self._confirm_armed = time.monotonic()      # she has finished reading the request back
             self._is_speaking = value
+
+    def _voice_confirm(self, utterance: str) -> None:
+        """The user's own spoken yes/no (from the mic transcript, never from the model) answers a pending confirmation.
+        Only counts if it was said AFTER she finished reading the request back."""
+        try:
+            if not confirm_gate.pending_title() or self._confirm_armed <= 0:
+                return
+            ans = confirm_gate.answer_from_speech(utterance)
+            if ans is not None:
+                self._confirm_armed = 0.0
+                confirm_gate.resolve(ans)
+        except Exception as e:
+            print(f"[FRIDAY] voice confirm error: {e}")
         if not value:
             # FRIDAY just finished talking: the 10-15 s listening window starts now.
             self._last_user_speech = time.monotonic()
@@ -1270,6 +1287,7 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                self._voice_confirm(txt)
 
                         if sc.turn_complete:
                             if self._turn_done_event:

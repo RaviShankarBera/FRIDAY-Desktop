@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from core import interactive
+from core import confirm, interactive
 from core import repo_install as ri
 
 
@@ -87,7 +87,7 @@ def _local_repo(tmp_path):
 
 def test_install_flow_needs_info_then_readback_then_runs(tmp_path, monkeypatch):
     from actions import install_repo as ir
-    interactive.reset()
+    confirm.bind(lambda t, d: None, lambda: None); confirm._pending = None
     r = ir.install_repo({})
     assert r.startswith("[NEED_INFO]")
     r = ir.install_repo({"repo": "psf/requests"})
@@ -106,11 +106,20 @@ def test_install_flow_needs_info_then_readback_then_runs(tmp_path, monkeypatch):
     dest = tmp_path / "apps"
     params = {"repo": "https://github.com/o/proj", "location": str(dest)}
     hold = ir.install_repo(params)
-    assert hold.startswith("[CONFIRM]") and "venv" in hold and not (dest / "proj").exists() and not ran
-    assert ir.install_repo({**params, "confirmed": "true"}).startswith("Downloaded o/proj") is True
+    assert hold.startswith("[CONFIRMATION_PENDING]") and "venv" in hold and not (dest / "proj").exists() and not ran
+    confirm.resolve(True)
+    _wait(lambda: (dest / "proj" / "requirements.txt").exists() and any("pip" in a for a in ran))
     assert (dest / "proj" / "requirements.txt").exists()
     assert any("venv" in a for a in ran) and any("pip" in a for a in ran)
     assert ir.install_repo(params).startswith("Sorry")        # already exists
+
+
+def _wait(cond, t=5.0):
+    import time
+    end = time.time() + t
+    while time.time() < end and not cond():
+        time.sleep(0.02)
+    return cond()
 
 
 def test_trust_tier():
@@ -161,7 +170,7 @@ def test_sandbox_generators(tmp_path):
 
 def test_low_trust_without_sandbox_says_so_and_run_gate(tmp_path, monkeypatch):
     from actions import install_repo as ir, run_project as rp
-    interactive.reset()
+    confirm.bind(lambda t, d: None, lambda: None); confirm._pending = None
     src = _local_repo(tmp_path)
 
     def fake_clone(owner, name, dest):
@@ -170,7 +179,8 @@ def test_low_trust_without_sandbox_says_so_and_run_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(ir, "_clone", fake_clone)
     monkeypatch.setattr(ir, "_meta", lambda o, n: {"stargazers_count": 0, "license": None})
     r = ir.install_repo({"repo": "o/low", "location": str(tmp_path / "apps")})
-    assert r.startswith("[CONFIRM]") and "low-trust" in r and "cannot isolate" in r and "Windows Sandbox" in r
+    assert r.startswith("[CONFIRMATION_PENDING]") and "low-trust" in r and "cannot isolate" in r and "Windows Sandbox" in r
+    confirm.resolve(False)
     # run_project: needs read-back, then runs; marker says low-trust so the warning is spoken
     proj = tmp_path / "apps" / "low"
     proj.mkdir(parents=True)
@@ -182,7 +192,8 @@ def test_low_trust_without_sandbox_says_so_and_run_gate(tmp_path, monkeypatch):
     os.symlink(sys.executable, vpy)
     monkeypatch.setattr(ri.os, "name", "posix")
     g = rp.run_project({"folder": str(proj), "wait": "2"})
-    assert g.startswith("[CONFIRM]") and "NOT isolated" in g and "main.py" in g
-    out = rp.run_project({"folder": str(proj), "confirmed": "true", "wait": "2"})
-    assert "hello from project" in out
+    assert g.startswith("[CONFIRMATION_PENDING]") and "NOT isolated" in g and "main.py" in g
+    confirm.resolve(True)
+    log = proj / ".friday_run.log"
+    assert _wait(lambda: log.exists() and "hello from project" in log.read_text())
     assert rp.run_project({"folder": str(proj / "nope")}).startswith("Sorry")

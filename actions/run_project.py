@@ -47,35 +47,33 @@ def run_project(parameters=None, response=None, player=None, session_memory=None
         where = "directly on your PC. This project looks low-trust and Windows Sandbox is not available, so it is NOT isolated"
     else:
         where = "on your PC"
-    hold = interactive.gate("run_project", f"Running '{shown}' from {source} in {target}, {where}", p.get("confirmed"))
-    if hold:
-        return hold
+    def _go() -> str:
+        if use_sbx:
+            out = target.parent / ".friday_sandbox" / target.name
+            out.mkdir(parents=True, exist_ok=True)
+            kinds = ri.detect_kind(set(files))
+            (out / "run.ps1").write_text(sbx.render_ps1(kinds, "requirements.txt" in files, bool({"pyproject.toml", "setup.py"} & set(files)), argv),
+                                         encoding="utf-8")
+            (out / "friday.wsb").write_text(sbx.render_wsb(str(target), str(out)), encoding="utf-8")
+            ok, why = sbx.launch(out / "friday.wsb")
+            return (f"Started '{shown}' in Windows Sandbox; watch that window. Log: {out / 'log.txt'}." if ok else why)
 
-    if use_sbx:
-        out = target.parent / ".friday_sandbox" / target.name
-        out.mkdir(parents=True, exist_ok=True)
-        kinds = ri.detect_kind(set(files))
-        (out / "run.ps1").write_text(sbx.render_ps1(kinds, "requirements.txt" in files, bool({"pyproject.toml", "setup.py"} & set(files)), argv),
-                                     encoding="utf-8")
-        (out / "friday.wsb").write_text(sbx.render_wsb(str(target), str(out)), encoding="utf-8")
-        ok, why = sbx.launch(out / "friday.wsb")
-        return (f"Started '{shown}' in Windows Sandbox; watch that window. Log: {out / 'log.txt'}." if ok else why)
+        if argv[0].lower().startswith(str(target).lower()) and not Path(argv[0]).exists():
+            return "The project's environment is missing. Install it first with install_repo, then run it. I started nothing."
+        log = target / ".friday_run.log"
+        with open(log, "wb") as lf:
+            proc = subprocess.Popen(argv, cwd=str(target), stdout=lf, stderr=subprocess.STDOUT, env=ri.clean_env(),
+                                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            time.sleep(float(p.get("wait", 6)))
+        code = proc.poll()
+        tail = log.read_text(errors="replace")[-300:].strip()
+        if code is None:
+            return f"Started '{shown}' (process {proc.pid}) and it is still running. Log: {log}."
+        if code == 0:
+            return f"'{shown}' ran and finished normally. Output: {tail or 'none'}"
+        return f"'{shown}' stopped with error code {code}. Last output: {tail or 'none'}"
 
-    if argv[0].lower().startswith(str(target).lower()) and not Path(argv[0]).exists():
-        return "The project's environment is missing. Install it first with install_repo, then run it. I started nothing."
-    log = target / ".friday_run.log"
-    with open(log, "wb") as lf:
-        proc = subprocess.Popen(argv, cwd=str(target), stdout=lf, stderr=subprocess.STDOUT, env=ri.clean_env(),
-                                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-        time.sleep(float(p.get("wait", 6)))
-    code = proc.poll()
-    tail = log.read_text(errors="replace")[-300:].strip()
-    if code is None:
-        return f"Started '{shown}' (process {proc.pid}) and it is still running. Log: {log}."
-    if code == 0:
-        return f"'{shown}' ran and finished normally. Output: {tail or 'none'}"
-    return f"'{shown}' stopped with error code {code}. Last output: {tail or 'none'}"
-
+    return interactive.park("run_project", f"Run '{shown}' from {source} in {target}, {where}", _go, speak)
 
 TOOL = {
     "name": "run_project",
@@ -84,7 +82,6 @@ TOOL = {
     "parameters": {"type": "OBJECT", "properties": {
         "folder": {"type": "STRING", "description": "Full path of the installed project folder"},
         "sandbox": {"type": "STRING", "description": "Leave empty."},
-        "confirmed": {"type": "STRING", "description": "'true' only after the user said yes to the read-back."},
     }, "required": ["folder"]},
     "handler": run_project,
 }

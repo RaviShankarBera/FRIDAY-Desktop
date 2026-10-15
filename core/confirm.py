@@ -151,6 +151,12 @@ def resolve(accepted: bool) -> None:
                      name=f"confirm-{p.key}").start()
 
 
+def pending_since() -> float:
+    """time.monotonic() when the current confirmation was put up; 0.0 when none is waiting."""
+    with _lock:
+        return _pending.at if _pending is not None else 0.0
+
+
 def pending_title() -> str:
     """'' when nothing is waiting. Lets an action avoid stacking two banners."""
     with _lock:
@@ -159,3 +165,15 @@ def pending_title() -> str:
         if time.monotonic() - _pending.at > TIMEOUT_SECONDS:
             return ""
         return _pending.title
+
+
+_YES = {"yes", "yeah", "yep", "yup", "confirm", "confirmed", "go ahead", "do it", "sure", "ok", "okay", "haan", "ha", "kar do"}
+_NO = {"no", "nope", "cancel", "stop", "don't", "dont", "nahi", "nahin", "mat karo"}
+
+
+def answer_from_speech(utterance: str):
+    """True / False for a short spoken yes / no, else None. Only whole short answers count, never a yes inside a sentence."""
+    t = " ".join((utterance or "").lower().replace(",", " ").replace(".", " ").replace("!", " ").replace("?", " ").split())
+    if t.startswith("friday "):
+        t = t[7:]
+    return True if t in _YES else False if t in _NO else None

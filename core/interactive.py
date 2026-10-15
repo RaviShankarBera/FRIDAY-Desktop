@@ -1,40 +1,37 @@
-"""Read-back gate: actions with side effects are repeated back and only run after a spoken yes.
+"""Park an action with side effects behind the on-screen confirmation, which only the user can answer.
 
-First call  -> returns "[CONFIRM] ..." and remembers exactly what was read back.
-Second call -> runs only if the user said yes (confirmed=true) AND it matches what was read back,
-               within TTL seconds. The model cannot skip the read-back by passing confirmed=true up front.
+The model never confirms anything. A tool that needs approval builds the exact action as a closure (`run`) with every
+parameter already captured, and hands it to park(). park() puts a CONFIRM / CANCEL banner on the HUD (core/confirm.py) and
+returns text telling the model to read the request back. The closure runs ONLY when the UI calls confirm.resolve(True),
+i.e. the user pressed CONFIRM or said "yes" and the voice path forwarded it. There is no tool parameter that can approve it,
+and calling the tool again just parks a new request in place of the old one.
 """
 from __future__ import annotations
 
-import re
-import time
+from typing import Callable
 
-TTL = 120.0
-_PENDING: dict[str, float] = {}
+from core import confirm
 
 
-def _key(tool: str, summary: str) -> str:
-    return tool + "|" + re.sub(r"\s+", " ", summary.strip().lower())
+def park(tool: str, summary: str, run: Callable[[], str], speak: Callable[[str], None] | None = None) -> str:
+    """Returns the text for the model. Nothing has run when this returns."""
+    if confirm.pending_title():
+        return ("There is already a confirmation waiting on screen. Ask the user to answer that one first. "
+                "I have NOT done this request.")
 
+    def _run() -> str:
+        result = run() or "Done."
+        if speak:
+            try:
+                speak(str(result)[:300])
+            except Exception:
+                pass
+        return str(result)
 
-def is_true(v) -> bool:
-    return str(v).strip().lower() in ("true", "yes", "1", "y")
-
-
-def gate(tool: str, summary: str, confirmed, now: float | None = None) -> str | None:
-    """None = go ahead. Otherwise the text to return to the model instead of acting."""
-    now = time.monotonic() if now is None else now
-    for k in [k for k, t in _PENDING.items() if now - t > TTL]:
-        _PENDING.pop(k, None)
-    k = _key(tool, summary)
-    if is_true(confirmed) and k in _PENDING:
-        _PENDING.pop(k, None)
-        return None
-    _PENDING[k] = now
-    return (f"[CONFIRM] I have NOT done this yet. Read it back to the user in one short sentence: "
-            f"\"{summary}. Shall I go ahead?\" Then wait for their answer. If they say yes, call {tool} again with "
-            f"exactly the same details plus confirmed='true'. If they say no or change anything, do not run it.")
-
-
-def reset() -> None:
-    _PENDING.clear()
+    title = summary if len(summary) <= 90 else summary[:87] + "..."
+    out = confirm.request(key=tool, title=title, detail=summary, run=_run)
+    if out.startswith("[CONFIRMATION_PENDING]"):
+        return (f"[CONFIRMATION_PENDING] I have NOT done this yet. A confirmation is on the user's screen: \"{summary}\". "
+                "Read that request back in one short sentence and ask them to say yes or press CONFIRM. "
+                "Never say it is done and never call this tool again to 'confirm' - only the user can.")
+    return out
