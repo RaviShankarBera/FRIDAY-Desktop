@@ -67,3 +67,11 @@ vector_store/
 
 # private personal knowledge (never commit)
 knowledge_seed.local/
+
+# user work modes (can contain local paths)
+config/modes.json
+
+# Google OAuth for the morning brief + meeting notes + bridge state (all local only)
+config/google/
+config/bridge_state.json
+meetings/

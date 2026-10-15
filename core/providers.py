@@ -37,12 +37,14 @@ SPECS: dict[str, Spec] = {s.name: s for s in (
     Spec("gemini", "Gemini", True, "gemini_api_key", "gemini", "", "gemini-flash-latest"),
     Spec("nvidia", "NVIDIA", True, "nvidia_api_key", "openai_compat",
          "https://integrate.api.nvidia.com/v1", "meta/llama-3.3-70b-instruct"),
+    Spec("ollama", "Local Ollama", True, "ollama_model", "ollama",
+         "http://127.0.0.1:11434", "llama3.2:3b"),
     Spec("deepseek", "DeepSeek", False, "deepseek_api_key", "openai_compat",
          "https://api.deepseek.com", "deepseek-chat"),
     Spec("openai", "OpenAI", False, "openai_api_key", "openai_compat",
          "https://api.openai.com/v1", "gpt-4o-mini"),
 )}
-FREE_ORDER = ("gemini", "nvidia")           # automatic fallback order
+FREE_ORDER = ("gemini", "nvidia", "ollama")   # automatic fallback order; local Ollama is the last resort
 PLACEHOLDER = "PASTE_YOUR"
 
 
@@ -73,7 +75,28 @@ def save_config(updates: dict, path: Path | None = None) -> None:
     p.write_text(json.dumps(cfg, indent=4), encoding="utf-8")
 
 
+_OLLAMA_PROBE: dict = {"t": 0.0, "up": False}
+
+
+def ollama_up(base: str = "http://127.0.0.1:11434", cache_s: float = 20.0) -> bool:
+    """True when a local Ollama server answers. Cached so status() stays cheap."""
+    import time
+    now = time.monotonic()
+    if now - _OLLAMA_PROBE["t"] < cache_s and _OLLAMA_PROBE["t"]:
+        return _OLLAMA_PROBE["up"]
+    up = False
+    try:
+        import requests
+        up = requests.get(base + "/api/tags", timeout=0.6).status_code == 200
+    except Exception:
+        up = False
+    _OLLAMA_PROBE.update(t=now, up=up)
+    return up
+
+
 def has_key(cfg: dict, name: str) -> bool:
+    if name == "ollama":                 # no key: usable when enabled (default) and the server is running
+        return bool(cfg.get("ollama_enabled", True)) and ollama_up(cfg.get("ollama_url") or SPECS[name].base_url)
     v = str(cfg.get(SPECS[name].key_field) or "").strip()
     return bool(v) and PLACEHOLDER not in v
 
@@ -125,13 +148,15 @@ def full_chain(cfg: dict) -> list[str]:
 def set_active(name: str, cfg_path: Path | None = None) -> str:
     """Switch the active provider. Returns a short message for the user."""
     name = (name or "").strip().lower()
-    aliases = {"google": "gemini", "nim": "nvidia", "gpt": "openai", "chatgpt": "openai"}
+    aliases = {"google": "gemini", "nim": "nvidia", "local": "ollama", "offline": "ollama", "gpt": "openai", "chatgpt": "openai"}
     name = aliases.get(name, name)
     if name not in SPECS:
-        return f"Sorry, I don't know a provider called '{name}'. Options: gemini, nvidia."
+        return f"Sorry, I don't know a provider called '{name}'. Options: gemini, nvidia, ollama."
     cfg = load_config(cfg_path)
     s = SPECS[name]
     if not has_key(cfg, name):
+        if name == "ollama":
+            return "Sorry, Ollama is not running. Install it from ollama.com, run 'ollama pull llama3.2:3b', then try again."
         return f"Sorry, {s.label} has no key saved yet. Add it in Manage Providers first."
     if not s.free and not allow_paid(cfg):
         return (f"Sorry, {s.label} is a paid provider and FRIDAY is in free-only mode, "
@@ -164,6 +189,23 @@ def call_gemini(messages: list[dict], key: str, model: str) -> str:
     return (r.text or "").strip()
 
 
+def call_ollama(messages: list[dict], model: str, base_url: str) -> str:
+    """Local model through Ollama's /api/chat. Free, offline, no key."""
+    import requests
+    try:
+        r = requests.post(f"{base_url}/api/chat",
+                          json={"model": model, "messages": messages, "stream": False,
+                                "options": {"temperature": 0.2}}, timeout=120)
+    except Exception as e:                      # noqa: BLE001
+        raise ProviderError(str(e)) from e
+    if r.status_code >= 400:
+        raise ProviderError(f"Ollama HTTP {r.status_code} (is the model pulled? run: ollama pull {model})")
+    try:
+        return (r.json()["message"]["content"] or "").strip()
+    except Exception as e:                      # noqa: BLE001
+        raise ProviderError("bad Ollama response") from e
+
+
 def call_openai_compat(messages: list[dict], key: str, model: str, base_url: str) -> str:
     import requests
     try:
@@ -185,6 +227,9 @@ def call_openai_compat(messages: list[dict], key: str, model: str, base_url: str
 
 def _default_caller(name: str, cfg: dict) -> Callable[[list[dict]], str]:
     s = SPECS[name]
+    if s.kind == "ollama":
+        return lambda msgs: call_ollama(msgs, cfg.get("ollama_model") or s.default_model,
+                                        cfg.get("ollama_url") or s.base_url)
     key = str(cfg.get(s.key_field)).strip()
     model = cfg.get(f"{name}_model") or s.default_model
     if s.kind == "gemini":

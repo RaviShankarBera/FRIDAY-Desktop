@@ -781,6 +781,10 @@ class JarvisLive:
             prompt = "You are FRIDAY, a helpful female voice assistant."
         decls = list(TOOL_DECLARATIONS)
         try:
+            decls += self._action_registry.get_tool_declarations()
+        except Exception:
+            pass
+        try:
             decls += self._plugin_registry.get_tool_declarations()
         except Exception:
             pass
@@ -1724,6 +1728,60 @@ class JarvisLive:
                 print(f"[Dashboard] Command error: {e}")
                 await asyncio.sleep(0.5)
 
+    # ── phone bridge (Telegram) ─────────────────────────────────────────────
+
+    def _start_phone_bridge(self) -> None:
+        """Commands typed on the phone run through the same tools (and the same on-screen
+        confirmation gate) as voice. Off unless telegram_bot_token is in config/api_keys.json."""
+        try:
+            from types import SimpleNamespace
+            from core import bridge as _bridge
+            from core.providers import Router
+            from core.voice_fallback import FallbackBrain
+            loop = asyncio.get_event_loop()
+            log = self.ui.write_log
+            try:
+                prompt = open(Path(__file__).parent / "core" / "prompt.txt", encoding="utf-8").read()
+            except Exception:
+                prompt = "You are FRIDAY, a helpful assistant."
+            decls = (list(TOOL_DECLARATIONS) + self._action_registry.get_tool_declarations()
+                     + self._plugin_registry.get_tool_declarations())
+
+            def run_tool(name, args):
+                fc = SimpleNamespace(name=name, args=args, id="bridge")
+                fr = asyncio.run_coroutine_threadsafe(self._execute_tool(fc), loop).result(timeout=180)
+                return (fr.response or {}).get("result", "Done.")
+
+            brain = FallbackBrain(Router(notify=lambda m: log(f"SYS: {m}")), prompt, decls, run_tool, log)
+            self._bridge = _bridge.start_if_configured(brain.reply, log)
+        except Exception as e:
+            print(f"[Bridge] Disabled: {e}")
+            self._bridge = None
+
+    # ── morning brief (optional, off by default) ────────────────────────────
+
+    async def _auto_brief_loop(self) -> None:
+        """If morning_brief_auto is true in config, speak the brief once a day after brief_hour."""
+        import datetime as _dt
+        from core import brief as _brief
+        from core.providers import load_config
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                await asyncio.sleep(60)
+                cfg = load_config()
+                now = _dt.datetime.now()
+                if not self.session or not _brief.should_auto_brief(cfg, now):
+                    continue
+                text = await loop.run_in_executor(
+                    None, lambda: _brief.build_brief(_brief.default_sources(cfg), name=cfg.get("user_title") or "sir"))
+                _brief.mark_briefed(now)
+                self.ui.write_log("SYS: Morning brief.")
+                self.speak("Read this morning briefing aloud to the user exactly as written, "
+                           "adding nothing: " + text)
+            except Exception as e:
+                print(f"[Brief] {e}")
+
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def run(self):
@@ -1781,6 +1839,9 @@ class JarvisLive:
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
+
+        self._start_phone_bridge()
+        asyncio.create_task(self._auto_brief_loop())
 
         while True:
             try:

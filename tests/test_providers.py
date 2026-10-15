@@ -61,4 +61,48 @@ def test_switch_rules(tmp_path):
 
 def test_status_labels():
     st = P.status({**KEYS, "active_provider": "nvidia"})
-    assert st == {"gemini": "connected", "nvidia": "active", "deepseek": "paid-off", "openai": "paid-off"}
+    assert st == {"gemini": "connected", "nvidia": "active", "ollama": "not-linked",
+                  "deepseek": "paid-off", "openai": "paid-off"}
+
+
+def test_ollama_is_last_free_fallback_when_running(monkeypatch):
+    monkeypatch.setattr(P, "ollama_up", lambda *a, **k: True)
+    assert P.automatic_chain(KEYS) == ["gemini", "nvidia", "ollama"]
+    seen = []
+    r = P.Router(KEYS, {"gemini": quota, "nvidia": quota, "ollama": ok("ollama")}, notify=seen.append)
+    assert r.chat([{"role": "user", "content": "hi"}]) == "from ollama"
+    assert "switched to Local Ollama" in seen[0]
+
+
+def test_ollama_alone_works_without_any_key(monkeypatch):
+    monkeypatch.setattr(P, "ollama_up", lambda *a, **k: True)
+    r = P.Router({}, {"ollama": ok("ollama")})
+    assert r.chat([]) == "from ollama"
+
+
+def test_ollama_not_running_is_skipped_and_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(P, "ollama_up", lambda *a, **k: False)
+    assert "ollama" not in P.automatic_chain(KEYS)
+    monkeypatch.setattr(P, "ollama_up", lambda *a, **k: True)
+    assert "ollama" not in P.automatic_chain({**KEYS, "ollama_enabled": False})
+
+
+def test_call_ollama_parses_response_and_maps_errors(monkeypatch):
+    import requests
+    class R:
+        def __init__(s, code, js): s.status_code, s._j = code, js
+        def json(s): return s._j
+    monkeypatch.setattr(requests, "post", lambda *a, **k: R(200, {"message": {"content": " hi "}}))
+    assert P.call_ollama([], "m", "http://x") == "hi"
+    monkeypatch.setattr(requests, "post", lambda *a, **k: R(404, {}))
+    with pytest.raises(P.ProviderError):
+        P.call_ollama([], "m", "http://x")
+    def down(*a, **k): raise requests.ConnectionError("refused")
+    monkeypatch.setattr(requests, "post", down)
+    with pytest.raises(P.ProviderError):
+        P.call_ollama([], "m", "http://x")
+
+
+def test_switch_to_ollama_when_down_gives_install_hint(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "ollama_up", lambda *a, **k: False)
+    assert "ollama pull" in P.set_active("local", tmp_path / "k.json")

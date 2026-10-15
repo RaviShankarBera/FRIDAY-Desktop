@@ -10,5 +10,13 @@
   "active_provider": "gemini",
   "allow_paid": false,
   "live_model": "",
-  "stt_model_path": ""
+  "stt_model_path": "",
+  "telegram_bot_token": "",
+  "home_city": "",
+  "user_title": "sir",
+  "morning_brief_auto": false,
+  "brief_hour": 6,
+  "ollama_model": "llama3.2:3b",
+  "ollama_enabled": true,
+  "meeting_device": ""
 }

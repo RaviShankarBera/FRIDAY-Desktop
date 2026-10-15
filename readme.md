@@ -36,6 +36,16 @@ Sidebar pages: Command Center, AI Core, Agents (live status from the task board)
 ## Personal knowledge base
 `knowledge_seed/` is a generic template (who you are, work, goals, preferences, projects) plus the MORNING BRIEF spec. To make FRIDAY know you, create a folder `knowledge_seed.local/` next to `main.py`, copy those files in and fill them. FRIDAY loads `knowledge_seed.local/` when it exists (it is gitignored, so it stays on your PC) and otherwise the template. Files load at start, once per change. Keep private details (health, finances, passwords) out of anything you publish. The Morning briefing workflow follows the spec: top email with a suggested reply, LinkedIn urgent messages / wishes / engagement tally, 10 India and 5 international news. Parts FRIDAY cannot reach are reported plainly, never invented.
 
+## Upgrades (v1.1)
+All work from voice, from typed commands starting with "Friday", and from the phone bridge. None needs a paid service.
+- **Screen vision** (`screen_vision`): "Friday, what is this error?" Looks at the screen or the active window and explains it. "Copy the fix" puts the answer on the clipboard.
+- **PC control** (`pc_control`): timers ("timer 25 minutes"), find/open a file by name, save a screenshot to Pictures/FRIDAY, running apps, close an app, volume, brightness, shutdown/restart/sleep/lock. Shutdown, restart and closing an app need a click on the on-screen confirmation.
+- **Work modes** (`work_mode`): "Friday, work mode / meeting mode / gaming mode / chill mode". Opens apps, URLs and folders, closes distractions, turns notifications off or on. Say "save a mode called study with apps notepad and folder D:/notes" to add your own, stored in `config/modes.json` (gitignored).
+- **Morning voice brief** (`morning_brief`): date, weather for `home_city`, today's calendar, unread mail headlines, 10 India and 5 world headlines (Google News RSS). Calendar and mail need a one-time read-only Google sign-in: put your own OAuth client file at `config/google/client_secret.json`, then say "Friday, connect Google". Set `"morning_brief_auto": true` to have it spoken once a day after `brief_hour`. Sources it cannot reach are named, never invented. It never sends or replies to mail.
+- **Meeting assistant** (`meeting_assistant`): "start recording the meeting" ... "stop recording". Records the microphone, transcribes and summarises with your Gemini key, saves audio, transcript and summary under `meetings/` (gitignored). Tell people you are recording.
+- **Phone bridge**: send FRIDAY a command from Telegram (free, no public URL). Create a bot with @BotFather, put its token in `config/api_keys.json` as `telegram_bot_token`, start FRIDAY, and send the bot `/pair <code shown in the FRIDAY log>` once. Only that chat can command the PC. `/screen` sends a screenshot. Shutdown, restart and close-app still need a click on the PC.
+- **Offline fallback**: the chain is Gemini, then NVIDIA, then local Ollama. Install Ollama (ollama.com), run `ollama pull llama3.2:3b`. If every model is unavailable, basic commands still work by rule: open/close app, volume, brightness, timer, screenshot, lock, work mode.
+
 ## Tests
 `python -m pytest tests` (providers and free-only fallback, knowledge base, agent graph, actions, fallback voice, UI smoke test).
 

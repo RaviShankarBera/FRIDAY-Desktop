@@ -154,7 +154,16 @@ class FallbackBrain:
                           {"role": "user", "content": f"TOOL RESULT ({call['name']}): {res}"}]
             return "Sorry, I could not finish that task."
         except QuotaExhausted as e:
-            return str(e)
+            # No model reachable at all: still do the basics by rule, so control never stops.
+            from core import offline_commands
+            call = offline_commands.match(self.history[-1]["content"])
+            if call:
+                self.log(f"SYS: No model reachable, running '{call['name']}' by offline rule.")
+                try:
+                    return str(self.run_tool(call["name"], call["args"]))[:300]
+                except Exception as ex:                      # noqa: BLE001
+                    return f"Sorry, that failed: {ex}"
+            return str(e) + " I can still do basic commands offline: open or close an app, volume, brightness, timer, screenshot, lock, work mode."
 
 
 class FallbackVoice:
