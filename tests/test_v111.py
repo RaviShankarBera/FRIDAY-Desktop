@@ -163,3 +163,39 @@ def test_installer_pick_skips_other_products():
     from actions.download_file import pick_installer
     h = '<a href="https://downloads.claude.ai/claude-science/latest/windows-x64.exe">s</a>'
     assert pick_installer(h, "https://claude.com/download", ("claude.ai",)) is None
+
+
+def test_readback_gate():
+    from core import interactive as i
+    i.reset()
+    r = i.gate("send_message", "Sending WhatsApp message to Ana: 'hi'", None, now=100.0)
+    assert r.startswith("[CONFIRM]")
+    assert i.gate("send_message", "Sending WhatsApp message to Ana: 'hi'", "true", now=101.0) is None
+    assert i.gate("send_message", "Sending WhatsApp message to Ana: 'hi'", "true", now=102.0).startswith("[CONFIRM]")  # one use only
+    i.gate("send_message", "Sending to Bo: 'x'", None, now=200.0)
+    assert i.gate("send_message", "Sending to Bo: 'CHANGED'", "true", now=201.0).startswith("[CONFIRM]")
+    i.gate("send_message", "Sending to Bo: 'x'", None, now=300.0)
+    assert i.gate("send_message", "Sending to Bo: 'x'", "true", now=300.0 + 500).startswith("[CONFIRM]")   # expired
+
+
+def test_send_and_file_ops_need_readback(tmp_path):
+    from core import interactive as i
+    i.reset()
+    from actions.send_message import send_message
+    r = send_message({"receiver": "Ana", "message_text": "hi", "platform": "WhatsApp", "confirmed": "true"})
+    assert r.startswith("[CONFIRM]")              # confirmed=true up front is not honoured
+    from actions.file_controller import file_controller
+    f = tmp_path / "a.txt"; f.write_text("x")
+    assert file_controller({"action": "delete", "path": str(tmp_path), "name": "a.txt"}).startswith("[CONFIRM]")
+    assert f.exists()
+    assert not file_controller({"action": "list", "path": str(tmp_path)}).startswith("[CONFIRM]")
+
+
+def test_download_detects_this_pc(monkeypatch):
+    from actions import download_file as d
+    assert d.detect_target()[0] in ("Windows", "macOS", "Linux")
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda u: opened.append(u))
+    said = []
+    r = d.download_file({"app": "VLC", "os": "macOS"}, speak=said.append)
+    assert "Downloading VLC for macOS" in said[0] and opened and "nothing" in r

@@ -248,6 +248,11 @@ def send_message(
     if not platform:
         return ("[NEED_INFO] I have NOT sent anything. Ask the user which app to use "
                 "(WhatsApp, Telegram, Instagram...) before sending.")
+    from core import interactive
+    hold = interactive.gate("send_message", f"Sending {platform.title()} message to {receiver}: '{message_text}'",
+                            params.get("confirmed"))
+    if hold:
+        return hold
     if not _PYAUTOGUI:
         return "PyAutoGUI is not installed — cannot control the desktop."
 
@@ -287,6 +292,10 @@ TOOL = {
             "platform": {
                 "type": "STRING",
                 "description": "Platform: WhatsApp, Telegram, etc."
+            },
+            "confirmed": {
+                "type": "STRING",
+                "description": "'true' only after the user said yes to the read-back."
             }
         },
         "required": [

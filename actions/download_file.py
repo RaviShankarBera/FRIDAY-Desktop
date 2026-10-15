@@ -93,6 +93,16 @@ def pick_installer(html: str, page_url: str, domains, machine: str = "x64"):
     return sorted(dict.fromkeys(cands), key=score, reverse=True)[0] if cands else None
 
 
+def detect_target() -> tuple[str, str]:
+    """(os, arch) of THIS computer: ('Windows'|'macOS'|'Linux', '64-bit'|'32-bit'|'ARM64')."""
+    import platform, struct
+    osn = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}.get(platform.system(), platform.system())
+    m = platform.machine().lower()
+    if "arm" in m or "aarch" in m:
+        return osn, "ARM64"
+    return osn, "64-bit" if struct.calcsize("P") * 8 == 64 or "64" in m else "32-bit"
+
+
 def resolve_official(app: str):
     """(official_page, direct_installer_or_None, domains). (None, None, ()) when the official site is not known."""
     import platform
@@ -112,11 +122,26 @@ def resolve_official(app: str):
     return page, direct, domains
 
 
-def download_file(parameters=None, response=None, player=None, session_memory=None) -> str:
+def download_file(parameters=None, response=None, player=None, session_memory=None, speak=None) -> str:
     p = parameters or {}
     url = (p.get("url") or "").strip()
     app = (p.get("app") or "").strip()
     if app and not url:
+        dos, darch = detect_target()
+        want_os = (p.get("os") or dos).strip().title().replace("Macos", "macOS")
+        want_arch = (p.get("arch") or darch).strip()
+        label = f"{app} for {want_os} {want_arch}"
+        if speak:
+            speak(f"Downloading {label}.")                    # read-back; low-risk so it goes straight ahead
+        if want_os != "Windows":
+            page, _x, _d = resolve_official(app)
+            if page:
+                try:
+                    import webbrowser; webbrowser.open(page)
+                except Exception:
+                    pass
+            return (f"I can only fetch Windows installers directly. For {want_os} I opened the official page "
+                    f"{page or ''} so the user can pick the download there. I downloaded nothing.")
         page, direct, _d = resolve_official(app)
         if not page:
             return (f"I don't have a verified official download site for '{app}', and I only download from official sites, "
@@ -181,6 +206,8 @@ TOOL = {
                     "Never claim a download happened unless this tool says 'Downloaded'."),
     "parameters": {"type": "OBJECT", "properties": {
         "url": {"type": "STRING", "description": "Direct link to the file (omit when using app)"},
+        "os": {"type": "STRING", "description": "Windows, macOS or Linux. Leave empty: it is auto-detected. Only set when the user wants a different computer."},
+        "arch": {"type": "STRING", "description": "64-bit, 32-bit or ARM64. Leave empty: auto-detected."},
         "app": {"type": "STRING", "description": "App name to download from its OFFICIAL site, e.g. 'Claude'. Preferred for installers."},
         "filename": {"type": "STRING", "description": "Optional file name to save as"},
     }, "required": []},

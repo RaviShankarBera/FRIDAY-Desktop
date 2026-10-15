@@ -646,6 +646,16 @@ def file_controller(
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
+    _risky = {"delete": "Moving {t} to the trash", "move": "Moving {t} to {d}", "rename": "Renaming {t} to {n}",
+              "organize_desktop": "Reorganising the files on your Desktop into folders"}
+    if action in _risky or (action == "write" and not params.get("append")):
+        from core import interactive
+        summary = _risky.get(action, "Overwriting {t}").format(
+            t=name or path, d=params.get("destination", "") or "the destination", n=params.get("new_name", ""))
+        hold = interactive.gate("file_controller", f"{summary} (action: {action})", params.get("confirmed"))
+        if hold:
+            return hold
+
     try:
         if action == "list":
             return list_files(path)
@@ -726,6 +736,10 @@ TOOL = {
             "destination": {
                 "type": "STRING",
                 "description": "Destination path for move/copy"
+            },
+            "confirmed": {
+                "type": "STRING",
+                "description": "'true' only after the user said yes to the read-back of delete/move/rename/overwrite."
             },
             "new_name": {
                 "type": "STRING",
